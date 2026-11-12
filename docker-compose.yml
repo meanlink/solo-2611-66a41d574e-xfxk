@@ -1,0 +1,104 @@
+name: member-seg
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+    container_name: ${COMPOSE_PROJECT_NAME:-member-seg}-frontend
+    ports:
+      - "${FRONTEND_PORT:-18204}:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/healthz | grep ok"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build:
+      context: ./backend
+    container_name: ${COMPOSE_PROJECT_NAME:-member-seg}-backend
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://batch:batchpass@db:5432/analytics}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-change-this-in-local}
+      SEED_DEMO: "true"
+      PROJECT_KEY: "segment_kmeans"
+    ports:
+      - "${BACKEND_PORT:-19204}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - artifacts:/app/artifacts
+    command: >
+      sh -c "python -m scripts.seed_demo --wait &&
+             uvicorn src.main:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+
+  worker:
+    build:
+      context: ./backend
+    container_name: ${COMPOSE_PROJECT_NAME:-member-seg}-worker
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql+psycopg2://batch:batchpass@db:5432/analytics}
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+      JWT_SECRET: ${JWT_SECRET:-change-this-in-local}
+      PROJECT_KEY: "segment_kmeans"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - artifacts:/app/artifacts
+    command: celery -A src.worker.celery_app worker --loglevel=INFO --concurrency=1
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A src.worker.celery_app inspect ping -d celery@$$HOSTNAME | grep -q pong"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+
+  db:
+    image: postgres:16-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-member-seg}-db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-analytics}
+      POSTGRES_USER: ${POSTGRES_USER:-batch}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-batchpass}
+    ports:
+      - "${DB_PORT:-17704}:5432"
+    volumes:
+      - dbdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-batch} -d ${POSTGRES_DB:-analytics}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${COMPOSE_PROJECT_NAME:-member-seg}-redis
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+
+volumes:
+  dbdata:
+    name: ${COMPOSE_PROJECT_NAME:-member-seg}-dbdata
+  redisdata:
+    name: ${COMPOSE_PROJECT_NAME:-member-seg}-redisdata
+  artifacts:
+    name: ${COMPOSE_PROJECT_NAME:-member-seg}-artifacts

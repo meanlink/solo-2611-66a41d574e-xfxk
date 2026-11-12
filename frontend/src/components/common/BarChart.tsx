@@ -1,0 +1,3 @@
+import type { Series } from "../../types";
+import { number } from "../../utils/format";
+export default function BarChart({series}:{series:Series[]}){ if(!series.length) return <div className="empty">当前结果没有可绘制的序列。</div>; const max=Math.max(...series.map(item=>Math.abs(item.value)),1); return <div className="bar-list">{series.map(item=><div className="bar-row" key={item.label}><span title={item.label}>{item.label}</span><div className="bar-track"><div className="bar-fill" style={{width:`${Math.max(Math.abs(item.value)/max*100,3)}%`}}/></div><span className="mono">{number(item.value)}</span></div>)}</div>; }
